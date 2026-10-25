@@ -1,0 +1,12 @@
+{
+  "display_name": "自动重Roll (Auto Re-roll)",
+  "loading_order": 15,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "nico",
+  "version": "1.2.2",
+  "homePage": "",
+  "auto_update": false
+}

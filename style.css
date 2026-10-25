@@ -1,0 +1,210 @@
+/* nicoAutoReroll —— 自动重Roll 样式 */
+
+/* ---------- 设置面板 ---------- */
+
+#nicoAutoReroll_container .arerr-hint {
+    opacity: 0.65;
+    font-size: calc(var(--mainFontSize) * 0.88);
+    line-height: 1.5;
+    margin: 4px 0 8px;
+}
+
+#nicoAutoReroll_container .arerr-section-title {
+    font-weight: 600;
+    font-size: calc(var(--mainFontSize) * 0.92);
+    opacity: 0.85;
+    margin: 10px 0 6px;
+}
+
+#nicoAutoReroll_container .arerr-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 14px;
+}
+
+#nicoAutoReroll_container .arerr-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+    font-size: calc(var(--mainFontSize) * 0.92);
+    cursor: pointer;
+}
+
+#nicoAutoReroll_container .arerr-check input[type="checkbox"] {
+    flex: 0 0 auto;
+}
+
+#nicoAutoReroll_container .arerr-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+}
+
+#nicoAutoReroll_container .arerr-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#nicoAutoReroll_container .arerr-field label {
+    margin: 0;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    white-space: nowrap;
+}
+
+#nicoAutoReroll_container .arerr-field input[type="number"] {
+    width: 78px;
+    flex: 0 0 auto;
+}
+
+#nicoAutoReroll_container .arerr-actions {
+    margin-top: 12px;
+}
+
+#nicoAutoReroll_container .arerr-reset {
+    cursor: pointer;
+}
+
+#nicoAutoReroll_container .arerr-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: var(--mainFontFamily, monospace);
+    font-size: calc(var(--mainFontSize) * 0.88);
+    line-height: 1.45;
+    margin: 2px 0 4px;
+}
+
+/* ---------- 重试倒计时状态条 ---------- */
+
+.arerr-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 82px;
+    transform: translateX(-50%);
+    z-index: 40000;
+
+    display: none;
+    align-items: center;
+    gap: 12px;
+
+    width: max-content;
+    min-width: 360px;
+    max-width: 94vw;
+    padding: 10px 14px;
+    border-radius: 12px;
+
+    background: var(--SmartThemeBlurTintColor, rgba(22, 22, 26, 0.94));
+    color: var(--SmartThemeBodyColor, #ffffff);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.38);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+
+    font-size: calc(var(--mainFontSize) * 0.95);
+    line-height: 1.4;
+    animation: arerr-bar-in 0.18s ease-out;
+}
+
+@keyframes arerr-bar-in {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.arerr-bar-spin {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    font-size: 16px;
+    color: var(--SmartThemeBodyColor, #ffffff);
+    animation: arerr-spin 1.4s linear infinite;
+}
+
+@keyframes arerr-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+.arerr-bar-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.arerr-bar-title {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.arerr-bar-sub {
+    opacity: 0.75;
+    font-size: calc(var(--mainFontSize) * 0.86);
+    word-break: break-word;
+}
+
+.arerr-btn {
+    flex: 0 0 auto;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: calc(var(--mainFontSize) * 0.88);
+    color: var(--SmartThemeBodyColor, #ffffff);
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.35));
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.arerr-btn:hover {
+    background: rgba(128, 128, 128, 0.22);
+}
+
+.arerr-btn:active {
+    opacity: 0.75;
+}
+
+.arerr-btn-primary {
+    background: var(--SmartThemeBodyColor, #ffffff);
+    color: var(--SmartThemeBackgroundColor, #16161a);
+    border-color: var(--SmartThemeBodyColor, #ffffff);
+    font-weight: 600;
+}
+
+.arerr-btn-primary:hover {
+    opacity: 0.88;
+    background: var(--SmartThemeBodyColor, #ffffff);
+}
+
+/* ---------- 窄屏适配 ---------- */
+
+@media (max-width: 700px) {
+    #nicoAutoReroll_container .arerr-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .arerr-bar {
+        bottom: 96px;
+        min-width: 0;
+        width: calc(100vw - 24px);
+        box-sizing: border-box;
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .arerr-bar-title {
+        white-space: normal;
+    }
+
+    .arerr-btn {
+        padding: 6px 10px;
+    }
+}
