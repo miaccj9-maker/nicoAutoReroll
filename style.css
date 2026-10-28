@@ -81,9 +81,15 @@
 .arerr-bar {
     position: fixed;
     left: 50%;
-    bottom: 82px;
+    /* 用 top + 视口单位定位，而不是 bottom：
+       本 fork 给 <html> 加了 transform，fixed 元素的包含块会变成 <html> 盒子；
+       移动端 body{position:fixed} 又会让 <html> 高度坍缩为 0，
+       bottom 定位会被算到视口顶部之外 → 整条状态条手机端不可见。
+       top 从包含块顶边（= 视口顶）起算，100dvh 为视口高度，任何情况下都正确。 */
+    top: calc(100vh - 140px);
+    top: calc(100dvh - 140px);
     transform: translateX(-50%);
-    z-index: 40000;
+    z-index: 2147483000 !important;
 
     display: none;
     align-items: center;
@@ -186,13 +192,17 @@
 
 /* ---------- 窄屏适配 ---------- */
 
-@media (max-width: 700px) {
+@media (max-width: 1000px) {
     #nicoAutoReroll_container .arerr-grid {
         grid-template-columns: minmax(0, 1fr);
     }
 
+    /* 手机 / 小平板：把状态条顶到输入框上方。
+       --arerr-kb 由 JS 按输入法 / 可视区实时调整（键盘弹出时继续上移），
+       env(safe-area-inset-bottom) 兼容刘海屏 / 底部手势条安全区。 */
     .arerr-bar {
-        bottom: 96px;
+        top: calc(100vh - 200px - var(--arerr-kb, 0px));
+        top: calc(100dvh - 200px - var(--arerr-kb, 0px) - env(safe-area-inset-bottom, 0px));
         min-width: 0;
         width: calc(100vw - 24px);
         box-sizing: border-box;

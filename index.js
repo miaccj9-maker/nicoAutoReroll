@@ -22,7 +22,13 @@
  *   6. 防误伤三道闸：HTTP 状态码硬证据优先、空回复 350ms 二次确认、真正触发前再复核一次；
  *   7. 重试动作与用户手动点「重新生成」完全一致（#option_regenerate），swipe 走官方 auto_swipe，
  *      单聊、群聊、空消息残留、未产生消息等情况都由酒馆原生逻辑处理；
- *   8. 不修改 SillyTavern 核心代码；禁用或删除本扩展即可完全移除。
+ *   8. 不修改 SillyTavern 核心代码；禁用或删除本扩展即可完全移除；
+ *   9. 输出完成且产生有效内容时播放完成提示音（默认你指定的铃声）；自动重试耗尽、最终失败时
+ *      播放失败提示音（可自定义链接，留空则用内置双音提示音）。提示音复用缓存实例、播放失败
+ *      静默、异步不阻塞，不会造成卡顿；
+ *   10. 状态条改用「top + 视口单位」定位：兼容部分内核给 <html> 加 transform 后 fixed 包含块
+ *       变成 <html> 盒子、以及移动端 body{position:fixed} 使 <html> 高度坍缩的问题，
+ *       修复手机端看不到下方重试模块的问题。
  *
  * 作者：nico
  */
@@ -30,8 +36,8 @@
 import { eventSource, event_types } from '../../../../scripts/events.js';
 
 const MODULE_NAME = 'nicoAutoReroll';
-const MODULE_VERSION = '1.2.2';
-const SETTINGS_VERSION = 2;
+const MODULE_VERSION = '1.3.0';
+const SETTINGS_VERSION = 3;
 const LOG_PREFIX = '[nicoAutoReroll]';
 
 // ============================ 默认设置 ============================
@@ -57,6 +63,10 @@ const DEFAULT_SETTINGS = {
     retryOnPartial: false,      // 流式中断且已有部分内容（会删残文重生）
     retryOnGroup: true,         // 群聊中也启用
     showToast: true,            // 弹出通知
+    notifyOnSuccess: true,      // 输出完成（有有效内容）时播放完成提示音
+    notifyOnError: true,        // 自动重试耗尽、最终失败时播放失败提示音
+    successSoundUrl: 'https://img2.tofaka.com/autoupload/f/dd1ez/20261026/6FdZ/1b73dff7988be6cc7ae9eefc31a29abc.mp4',
+    errorSoundUrl: '',          // 失败提示音链接；留空则使用内置双音提示音（无需网络）
 };
 
 const SETTINGS_TYPES = Object.fromEntries(
@@ -163,6 +173,121 @@ function pushSignal(signal) {
     if (!watch.active) return;
     watch.signals.push({ ...signal, at: Date.now() });
     console.warn(LOG_PREFIX, '检测到失败信号：', signal);
+}
+
+// ============================ 输出完成 / 失败通知 ============================
+
+const soundCache = { success: null, error: null };
+let beepCtx = null;
+
+/**
+ * 取（或创建）缓存音频实例。同一 URL 复用同一实例，避免每次播放新建对象造成开销。
+ */
+function getOrCreateAudio(which) {
+    const url = getSettings()[which === 'success' ? 'successSoundUrl' : 'errorSoundUrl'];
+    if (!url) return null;
+    if (soundCache[which] && soundCache[which].getAttribute('src') === url) {
+        return soundCache[which];
+    }
+    try {
+        const audio = new Audio(url);
+        audio.preload = 'auto';   // 提前加载，首次播放零延迟
+        audio.volume = 0.9;
+        soundCache[which] = audio;
+        return audio;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 播放提示音：复用缓存实例、打断上一次播放、异步 play、全程静默兜底，绝不阻塞 / 卡顿主流程。
+ */
+function playSound(which) {
+    try {
+        const audio = getOrCreateAudio(which);
+        if (audio) {
+            try { audio.pause(); } catch { /* ignore */ }
+            try { audio.currentTime = 0; } catch { /* ignore */ }
+            const p = audio.play();
+            if (p && typeof p.catch === 'function') p.catch(() => { /* 自动播放策略拦截时静默 */ });
+            return;
+        }
+        if (which === 'error') playErrorBeep();   // 未配置失败链接 → 内置提示音
+    } catch (err) {
+        console.debug(LOG_PREFIX, '提示音播放失败', err);
+    }
+}
+
+/**
+ * 内置失败提示音（双音下行，与完成铃声明显不同）。用 Web Audio 合成：
+ * 无网络请求、零延迟，几乎不占资源。
+ */
+function playErrorBeep() {
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!beepCtx) beepCtx = new AC();
+        if (beepCtx.state === 'suspended') beepCtx.resume();
+        const t0 = beepCtx.currentTime;
+        for (const [freq, start, dur] of [[880, 0, 0.16], [660, 0.18, 0.22]]) {
+            const osc = beepCtx.createOscillator();
+            const gain = beepCtx.createGain();
+            osc.type = 'square';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, t0 + start);
+            gain.gain.exponentialRampToValueAtTime(0.12, t0 + start + 0.015);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+            osc.connect(gain);
+            gain.connect(beepCtx.destination);
+            osc.start(t0 + start);
+            osc.stop(t0 + start + dur + 0.05);
+        }
+    } catch (err) {
+        console.debug(LOG_PREFIX, '内置失败提示音播放失败', err);
+    }
+}
+
+/**
+ * 生成成功且最后一条是有效 AI 输出时，播放完成提示音。
+ * 不打扰：用户手动停止、系统消息 / 旁白、空回复、拒答都不响。
+ */
+function notifySuccess() {
+    try {
+        if (!getSettings().notifyOnSuccess) return;
+        const ctx = getCtx();
+        const chat = ctx.chat || [];
+        const last = chat && chat.length ? chat[chat.length - 1] : null;
+        if (!last || last.is_user || last.is_system || last.extra?.type === 'NARRATOR') return;
+        if (messageLooksEmpty(last, getSettings())) return;
+        if (detectRefusal(last, getSettings())) return;
+        playSound('success');
+    } catch { /* 通知失败不影响主流程 */ }
+}
+
+/**
+ * 自动重试耗尽、最终失败时播放失败提示音。
+ */
+function notifyError() {
+    try {
+        if (!getSettings().notifyOnError) return;
+        playSound('error');
+    } catch { /* ignore */ }
+}
+
+/**
+ * 移动端：输入法弹出 / 浏览器工具栏变化时，把重试条顶到可视区上方（写入 --arerr-kb 变量，
+ * 由 style.css 消费），避免状态条被键盘或输入框遮住。
+ */
+function syncBarKbOffset() {
+    try {
+        const bar = document.getElementById('arerr_bar');
+        if (!bar || bar.style.display === 'none') return;
+        const vv = window.visualViewport;
+        if (!vv || typeof vv.height !== 'number') return;
+        const covered = Math.max(0, (window.innerHeight - vv.height) - (vv.offsetTop || 0));
+        bar.style.setProperty('--arerr-kb', `${Math.round(covered)}px`);
+    } catch { /* ignore */ }
 }
 
 // ============================ Hook：window.fetch ============================
@@ -695,6 +820,7 @@ function evaluate(token, reconfirmed) {
 
     if (!failure) {
         console.debug(LOG_PREFIX, '本次生成成功，重置重试计数');
+        notifySuccess();   // 输出完成 → 播放完成提示音
         deactivate();
         return;
     }
@@ -714,6 +840,7 @@ function evaluate(token, reconfirmed) {
                 { timeOut: 8000, preventDuplicates: true },
             );
         }
+        notifyError();   // 重试耗尽、最终失败 → 播放失败提示音
         deactivate();
         return;
     }
@@ -896,6 +1023,7 @@ function showBar(failure, attempt, max, delay) {
     bar.querySelector('#arerr_bar_reason').textContent = failure.label;
     bar.querySelector('#arerr_bar_countdown').textContent = String(Math.ceil(delay));
     bar.style.display = 'flex';
+    syncBarKbOffset();   // 移动端：按当前输入法 / 可视区状态调整位置
 }
 
 function updateCountdown(seconds) {
@@ -1001,6 +1129,27 @@ function buildSettingsPanel() {
                     命中自定义句式会直接判定为拒答（不看长度与引号），请谨慎填写；留空则只使用内置库。
                     内置软模式要求「短回复 + 无对白引号/动作标记 + 句式出现在开头」，避免误伤角色台词。
                 </div>
+                <div class="arerr-section-title">通知提示音</div>
+                <div class="arerr-grid">
+                    <label class="checkbox_label arerr-check" title="生成完成且产生有效输出时播放完成提示音">
+                        <input type="checkbox" id="arerr_notifyOnSuccess" ${settings.notifyOnSuccess ? 'checked' : ''}>
+                        <span>输出完成时播放提示音</span>
+                    </label>
+                    <label class="checkbox_label arerr-check" title="自动重试耗尽、最终失败时播放失败提示音（与完成提示音不同）">
+                        <input type="checkbox" id="arerr_notifyOnError" ${settings.notifyOnError ? 'checked' : ''}>
+                        <span>输出失败（重试耗尽）时播放提示音</span>
+                    </label>
+                </div>
+                <div class="arerr-field" title="输出完成提示音，支持 mp3 / wav / m4a / mp4 等浏览器可播放的音频">
+                    <label for="arerr_successSoundUrl">完成提示音链接</label>
+                    <input type="text" class="text_pole" id="arerr_successSoundUrl"
+                        value="${settings.successSoundUrl ?? ''}">
+                </div>
+                <div class="arerr-field" title="失败提示音；留空则使用内置双音提示音（无需网络、不卡顿）">
+                    <label for="arerr_errorSoundUrl">失败提示音链接（留空 = 内置）</label>
+                    <input type="text" class="text_pole" id="arerr_errorSoundUrl"
+                        value="${settings.errorSoundUrl ?? ''}">
+                </div>
                 <div class="arerr-actions">
                     <input type="button" class="menu_button arerr-reset" value="恢复默认设置">
                 </div>
@@ -1037,6 +1186,22 @@ function buildSettingsPanel() {
         saveSettings();
     });
 
+    container.querySelector('#arerr_notifyOnSuccess').addEventListener('change', (e) => {
+        getSettings().notifyOnSuccess = !!e.target.checked;
+        saveSettings();
+    });
+    container.querySelector('#arerr_notifyOnError').addEventListener('change', (e) => {
+        getSettings().notifyOnError = !!e.target.checked;
+        saveSettings();
+    });
+    for (const key of ['successSoundUrl', 'errorSoundUrl']) {
+        const input = container.querySelector(`#arerr_${key}`);
+        input.addEventListener('input', () => {
+            getSettings()[key] = input.value.trim();
+            saveSettings();
+        });
+    }
+
     container.querySelector('.arerr-reset').addEventListener('click', () => {
         const s = getCtx().extensionSettings[MODULE_NAME];
         for (const [key, defaultValue] of Object.entries(DEFAULT_SETTINGS)) {
@@ -1051,6 +1216,10 @@ function buildSettingsPanel() {
             container.querySelector(`#arerr_${key}`).value = String(s[key]);
         }
         container.querySelector('#arerr_refusalCustomPatterns').value = s.refusalCustomPatterns;
+        container.querySelector('#arerr_notifyOnSuccess').checked = !!s.notifyOnSuccess;
+        container.querySelector('#arerr_notifyOnError').checked = !!s.notifyOnError;
+        container.querySelector('#arerr_successSoundUrl').value = s.successSoundUrl;
+        container.querySelector('#arerr_errorSoundUrl').value = s.errorSoundUrl;
         if (window.toastr) {
             window.toastr.success('已恢复默认设置', '自动重Roll', { timeOut: 2000 });
         }
@@ -1066,6 +1235,16 @@ function init() {
     if (migrateSettings(settings)) saveSettings();
     installFetchHook();
     installToastHook();
+
+    // 预热提示音缓存：提前加载完成铃声，首次播放零延迟（异步加载，不阻塞页面）
+    try { getOrCreateAudio('success'); } catch { /* ignore */ }
+    try { getOrCreateAudio('error'); } catch { /* ignore */ }
+
+    // 移动端：输入法 / 浏览器工具栏变化时重算重试条位置，避免被键盘遮住
+    if (window.visualViewport && typeof window.visualViewport.addEventListener === 'function') {
+        window.visualViewport.addEventListener('resize', syncBarKbOffset);
+        window.visualViewport.addEventListener('scroll', syncBarKbOffset);
+    }
 
     eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
     eventSource.on(event_types.GENERATION_STOPPED, onGenerationStopped);
